@@ -20,11 +20,14 @@ var rootCmd = &cobra.Command{
 	 	the standard upload API is used, and if the -p option is specified the default curl progress bar is displayed
 		 during the upload process. The local file/dir parameter supports wildcards expansion.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		client := dropbox.New(token)
-		_ = client
-
+		token := "005ZW5tbmE0AAAAAAAAAAX-fKV88JbsevNEt0cOlncpWvCrSLfmvvhgtDMKByaqF"
+		client := dropbox.New(token, options)
+		// _ = client
+		fmt.Println(options)
 		// dropbox.Upload(options)
-		// dropbox.ChunkedUpload(options)
+		if err := client.Dropbox.ChunkedUpload(); err != nil {
+			panic(err)
+		}
 	},
 }
 

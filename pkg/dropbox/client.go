@@ -17,13 +17,13 @@ type Client struct {
 }
 
 // New client with access token
-func New(accessToken string) *Client {
+func New(accessToken string, opt UploadOptions) *Client {
 	c := &Client{
 		HTTPClient:  http.DefaultClient,
 		AccessToken: accessToken,
 	}
 
-	c.Dropbox = &Dropbox{c}
+	c.Dropbox = &Dropbox{Client: c, Options: &opt}
 
 	return c
 }
@@ -65,11 +65,8 @@ func (c *Client) upload(path string, in interface{}, r io.Reader) (io.ReadCloser
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+c.AccessToken)
-	req.Header.Set("Dropbox-API-eArg", string(body))
-
-	if r != nil {
-		req.Header.Set("Content-Type", "application/octet-stream")
-	}
+	req.Header.Set("Dropbox-API-Arg", string(body))
+	req.Header.Set("Content-Type", "application/octet-stream")
 
 	res, err := c.do(req)
 	if err != nil {
@@ -97,11 +94,11 @@ func (c *Client) do(req *http.Request) (io.ReadCloser, error) {
 		return nil, err
 	}
 
-	defer res.Body.Close()
-
 	if res.StatusCode < http.StatusBadRequest {
 		return res.Body, nil
 	}
+
+	defer res.Body.Close()
 
 	e := &Error{
 		StatusCode: res.StatusCode,
