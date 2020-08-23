@@ -52,7 +52,7 @@ func (c *Client) call(path string, opt interface{}) (io.ReadCloser, error) {
 	return r, nil
 }
 
-func (c *Client) upload(path string, in interface{}, r io.Reader) (io.ReadCloser, error) {
+func (c *Client) content(path string, in interface{}, r io.Reader) (io.ReadCloser, error) {
 	url := "https://content.dropboxapi.com/2" + path
 
 	body, err := json.Marshal(in)

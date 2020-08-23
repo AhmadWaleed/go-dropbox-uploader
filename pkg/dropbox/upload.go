@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"time"
 )
 
 // ChunkedUploadFileSize of single chunk to upload to dropbox
@@ -40,26 +39,9 @@ func (c *Dropbox) Upload() error {
 	c.Options.Reader = file
 	c.Options.AutoRename = true
 
-	res, err := c.Dropbox.upload("/files/upload", c.Options, file)
+	_, err = c.Dropbox.content("/files/upload", c.Options, file)
 	if err != nil {
 		return fmt.Errorf("could not upload file %v", err)
-	}
-
-	meta := struct {
-		Tag            string    `json:".tag"`
-		Name           string    `json:"name"`
-		PathLower      string    `json:"path_lower"`
-		PathDisplay    string    `json:"path_display"`
-		ClientModified time.Time `json:"client_modified"`
-		ServerModified time.Time `json:"server_modified"`
-		Rev            string    `json:"rev"`
-		Size           uint64    `json:"size"`
-		ID             string    `json:"id"`
-		ContentHash    string    `json:"content_hash,omitempty"`
-	}{}
-
-	if err := json.NewDecoder(res).Decode(&meta); err != nil {
-		return fmt.Errorf("could not parse response %v", err)
 	}
 
 	return nil
@@ -143,7 +125,7 @@ func (c *Dropbox) StartSession() (*UploadSessionCursor, error) {
 		Close bool `json:"close"`
 	}{Close: false}
 
-	res, err := c.upload("/files/upload_session/start", opt, nil)
+	res, err := c.content("/files/upload_session/start", opt, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -177,7 +159,7 @@ func (c *Dropbox) AppendChunk(chunk Chunk, s UploadSessionAppendArg, r io.Reader
 		return err
 	}
 
-	_, err = c.upload("/files/upload_session/append_v2", s, bytes.NewReader(buffer))
+	_, err = c.content("/files/upload_session/append_v2", s, bytes.NewReader(buffer))
 	if err != nil {
 		return err
 	}
@@ -196,7 +178,7 @@ func (c *Dropbox) FinishSession(s UploadSessionCursor) error {
 		Commit: *c.Options,
 	}
 
-	_, err := c.upload("/files/upload_session/finish", options, nil)
+	_, err := c.content("/files/upload_session/finish", options, nil)
 	if err != nil {
 		return err
 	}
