@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"log"
 	"os"
 
 	"github.com/AhmadWaleed/dropbox-uploader/pkg/dropbox"
@@ -13,16 +14,35 @@ var token string
 
 var rootCmd = &cobra.Command{
 	Use:   "upload",
-	Short: "Upload a local file or directory to a remote Dropbox folder.",
-	Long: `If the file is bigger than 150Mb the file is uploaded using small chunks (default 50Mb);
-		in this case a . (dot) is printed for every chunk successfully uploaded and a * (star) if an 
-		error occurs (the upload is retried for a maximum of three times). Only if the file is smaller than 150Mb,
-	 	the standard upload API is used, and if the -p option is specified the default curl progress bar is displayed
-		 during the upload process. The local file/dir parameter supports wildcards expansion.`,
+	Short: "Upload a local file to a remote Dropbox folder.",
+	Long:  `If the file is bigger than 150Mb the file is uploaded using small chunks (default 500Mb)`,
 	Run: func(cmd *cobra.Command, args []string) {
+		file, err := os.Open(options.Source)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		fileinfo, err := file.Stat()
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		options.File = file
+		options.AutoRename = true
+
 		client := dropbox.New(token, options)
+
+		if int(fileinfo.Size()) <= dropbox.UploadFileSizeLimit {
+			log.Println("uploading...")
+			if err := client.Dropbox.Upload(); err != nil {
+				log.Fatal(err)
+			}
+			return
+		}
+
+		log.Println("file size is more then 150 MB, uploading file in chunks.")
 		if err := client.Dropbox.ChunkedUpload(); err != nil {
-			panic(err)
+			log.Fatal(err)
 		}
 	},
 }

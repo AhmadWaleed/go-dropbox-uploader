@@ -2,25 +2,29 @@ package dropbox
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 )
 
-// ChunkedUploadFileSize of single chunk to upload to dropbox
-// const ChunkedUploadFileSize = 100 * 1024 * 1024
-const ChunkedUploadFileSize = 1
+const (
+	// UploadFileSizeLimit of uploading file
+	UploadFileSizeLimit = 150 * 1024 * 1024 // 150 MB
+	// ChunkedUploadFileSize of single chunk
+	ChunkedUploadFileSize = 50 * 1024 * 1024 // 50 MB
+)
 
 // UploadOptions for file
 type UploadOptions struct {
-	Source         string    `json:"-"`
-	Destination    string    `json:"path"`
-	Mode           string    `json:"mode"` // add, overwrite, update
-	AutoRename     bool      `json:"autorename"`
-	Mute           bool      `json:"mute"`
-	ClientModified string    `json:"client_modified,omitempty"`
-	Reader         io.Reader `json:"-"`
+	Source         string          `json:"-"`
+	Destination    string          `json:"path"`
+	Mode           string          `json:"mode"` // add, overwrite, update
+	AutoRename     bool            `json:"autorename"`
+	Mute           bool            `json:"mute"`
+	ClientModified string          `json:"client_modified,omitempty"`
+	File           *os.File        `json:"-"`
+	Ctx            context.Context `json:"-"`
 }
 
 // Dropbox uploader
@@ -31,17 +35,9 @@ type Dropbox struct {
 
 // Upload file to dropbox size limit 150 mb
 func (c *Dropbox) Upload() error {
-	file, err := os.Open(c.Options.Source)
+	_, err := c.Dropbox.content("/files/upload", c.Options, c.Options.File)
 	if err != nil {
-		return fmt.Errorf("could not open file %v", err)
-	}
-
-	c.Options.Reader = file
-	c.Options.AutoRename = true
-
-	_, err = c.Dropbox.content("/files/upload", c.Options, file)
-	if err != nil {
-		return fmt.Errorf("could not upload file %v", err)
+		return err
 	}
 
 	return nil
@@ -49,63 +45,38 @@ func (c *Dropbox) Upload() error {
 
 // ChunkedUpload uploads file more then 150 mb of size
 func (c *Dropbox) ChunkedUpload() error {
-	file, err := os.Open(c.Options.Source)
+	size, err := c.size()
 	if err != nil {
 		return err
 	}
 
-	defer file.Close()
-	c.Options.AutoRename = true
+	chunks, _ := splitChunks(size)
 
-	fileinfo, err := file.Stat()
+	s, err := c.startSession()
 	if err != nil {
 		return err
 	}
 
-	filesize := int(fileinfo.Size())
-
-	concurrency := filesize / ChunkedUploadFileSize
-
-	chunksizes := make([]Chunk, concurrency)
-
-	for i := 0; i < concurrency; i++ {
-		chunksizes[i].BufferSize = ChunkedUploadFileSize
-		chunksizes[i].Offset = int64(ChunkedUploadFileSize * i)
-	}
-
-	if remainder := filesize % ChunkedUploadFileSize; remainder != 0 {
-		c := Chunk{BufferSize: remainder, Offset: int64(concurrency * ChunkedUploadFileSize)}
-		concurrency++
-		chunksizes = append(chunksizes, c)
-	}
-
-	s, err := c.StartSession()
-	if err != nil {
-		return err
-	}
-
-	sessionArgs := &UploadSessionAppendArg{
-		Cursor: *s,
+	args := &UploadSessionAppendArg{
+		Cursor: s,
 		Close:  false,
 	}
 
-	for itr, chunk := range chunksizes {
+	for i, chunk := range chunks {
+		fmt.Printf("uploading... chunk %d\n", i+1)
 
-		if itr == len(chunksizes)-1 {
-			sessionArgs.Close = true
-		}
-
-		sessionArgs.Cursor.Offset = chunk.Offset
-
-		if err := c.AppendChunk(chunk, *sessionArgs, file); err != nil {
-			if err = c.FinishSession(*s); err != nil {
+		args.Cursor.Offset = chunk.Offset
+		if err := c.appendChunk(chunk, *args); err != nil {
+			if err = c.finishSession(UploadSessionCursor{
+				SessionID: s.SessionID,
+				Offset:    uint64(size)}); err != nil {
 				return err
 			}
-			break
+			return err
 		}
 	}
 
-	err = c.FinishSession(*s)
+	err = c.finishSession(UploadSessionCursor{SessionID: s.SessionID, Offset: uint64(size)})
 	if err != nil {
 		return err
 	}
@@ -113,14 +84,50 @@ func (c *Dropbox) ChunkedUpload() error {
 	return nil
 }
 
+// Chunk contains buffer size and
+type Chunk struct {
+	BufferSize int
+	Offset     uint64
+}
+
+func splitChunks(size int) ([]Chunk, int) {
+	splits := size / ChunkedUploadFileSize
+
+	chunks := make([]Chunk, splits)
+
+	for i := 0; i < splits; i++ {
+		chunks[i].BufferSize = ChunkedUploadFileSize
+		chunks[i].Offset = uint64(ChunkedUploadFileSize * i)
+	}
+
+	if remainder := size % ChunkedUploadFileSize; remainder != 0 {
+		chunks = append(chunks, Chunk{
+			BufferSize: remainder,
+			Offset:     uint64(splits * ChunkedUploadFileSize),
+		})
+		splits++
+	}
+
+	return chunks, splits
+}
+
+func (c *Dropbox) size() (int, error) {
+	fileinfo, err := c.Options.File.Stat()
+	if err != nil {
+		return 0, err
+	}
+
+	return int(fileinfo.Size()), nil
+}
+
 // UploadSessionCursor  Contains the upload session ID and the offset.
 type UploadSessionCursor struct {
 	SessionID string `json:"session_id"`
-	Offset    int64  `json:"offset"`
+	Offset    uint64 `json:"offset"`
 }
 
-// StartSession starts session for uploading file in chunks
-func (c *Dropbox) StartSession() (*UploadSessionCursor, error) {
+// starts session for uploading file in chunks
+func (c *Dropbox) startSession() (*UploadSessionCursor, error) {
 	opt := struct {
 		Close bool `json:"close"`
 	}{Close: false}
@@ -139,38 +146,33 @@ func (c *Dropbox) StartSession() (*UploadSessionCursor, error) {
 	return &data, nil
 }
 
-// Chunk contains buffer size and
-type Chunk struct {
-	BufferSize int
-	Offset     int64
-}
-
 // UploadSessionAppendArg contains the upload session ID and the offset and close status.
 type UploadSessionAppendArg struct {
-	Cursor UploadSessionCursor `json:"cursor"`
-	Close  bool                `json:"close"`
+	Cursor *UploadSessionCursor `json:"cursor"`
+	Close  bool                 `json:"close"`
 }
 
-// AppendChunk appends more data to an upload session.
-func (c *Dropbox) AppendChunk(chunk Chunk, s UploadSessionAppendArg, r io.ReaderAt) error {
-	buffer := make([]byte, chunk.BufferSize)
-	_, err := r.ReadAt(buffer, chunk.Offset)
+// appends more data to an upload session.
+func (c *Dropbox) appendChunk(chunk Chunk, s UploadSessionAppendArg) error {
+	buf := make([]byte, chunk.BufferSize)
+	_, err := c.Options.File.ReadAt(buf, int64(chunk.Offset))
 	if err != nil {
 		return err
 	}
 
-	_, err = c.content("/files/upload_session/append_v2", s, bytes.NewReader(buffer))
+	_, err = c.content("/files/upload_session/append_v2", s, bytes.NewReader(buf))
 	if err != nil {
 		return err
 	}
+
+	fmt.Println("bytestream to string: ", string(buf[:chunk.BufferSize]))
 
 	return nil
 }
 
-// FinishSession finishes an upload session
-// and save the uploaded data to the given file path.
-func (c *Dropbox) FinishSession(s UploadSessionCursor) error {
-	options := struct {
+// finishes an upload session and save the uploaded data to the given file path.
+func (c *Dropbox) finishSession(s UploadSessionCursor) error {
+	opt := struct {
 		Cursor UploadSessionCursor `json:"cursor"`
 		Commit UploadOptions       `json:"commit"`
 	}{
@@ -178,7 +180,7 @@ func (c *Dropbox) FinishSession(s UploadSessionCursor) error {
 		Commit: *c.Options,
 	}
 
-	_, err := c.content("/files/upload_session/finish", options, nil)
+	_, err := c.content("/files/upload_session/finish", opt, nil)
 	if err != nil {
 		return err
 	}

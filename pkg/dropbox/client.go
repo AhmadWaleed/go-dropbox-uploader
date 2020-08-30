@@ -76,18 +76,6 @@ func (c *Client) content(path string, in interface{}, r io.Reader) (io.ReadClose
 	return res, nil
 }
 
-// Error bad request
-type Error struct {
-	Status     string
-	StatusCode int
-	Summary    string `json:"error_summary"`
-}
-
-// Error string.
-func (e *Error) Error() string {
-	return e.Summary
-}
-
 func (c *Client) do(req *http.Request) (io.ReadCloser, error) {
 	res, err := c.HTTPClient.Do(req)
 	if err != nil {
@@ -100,7 +88,7 @@ func (c *Client) do(req *http.Request) (io.ReadCloser, error) {
 
 	defer res.Body.Close()
 
-	e := &Error{
+	e := &ClientErr{
 		StatusCode: res.StatusCode,
 		Status:     http.StatusText(res.StatusCode),
 	}
