@@ -2,7 +2,6 @@ package dropbox
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -17,14 +16,13 @@ const (
 
 // UploadOptions for file
 type UploadOptions struct {
-	Source         string          `json:"-"`
-	Destination    string          `json:"path"`
-	Mode           string          `json:"mode"` // add, overwrite, update
-	AutoRename     bool            `json:"autorename"`
-	Mute           bool            `json:"mute"`
-	ClientModified string          `json:"client_modified,omitempty"`
-	File           *os.File        `json:"-"`
-	Ctx            context.Context `json:"-"`
+	Source         string   `json:"-"`
+	Destination    string   `json:"path"`
+	Mode           string   `json:"mode"` // add, overwrite, update
+	AutoRename     bool     `json:"autorename"`
+	Mute           bool     `json:"mute"`
+	ClientModified string   `json:"client_modified,omitempty"`
+	File           *os.File `json:"-"`
 }
 
 // Dropbox uploader
@@ -63,7 +61,7 @@ func (c *Dropbox) ChunkedUpload() error {
 	}
 
 	for i, chunk := range chunks {
-		fmt.Printf("uploading... chunk %d\n", i+1)
+		fmt.Printf("uploading chunk %d\n", i+1)
 
 		args.Cursor.Offset = chunk.Offset
 		if err := c.appendChunk(chunk, *args); err != nil {
